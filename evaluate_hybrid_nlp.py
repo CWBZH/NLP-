@@ -1,7 +1,12 @@
+import argparse
 import json
+import os
+from collections import Counter
 from typing import Dict, List
 
+from generate_training_data import generate_bio_training_data
 from hybrid_path_nlp import HybridPathNLP
+from slot_tagger import BiLSTMCRFSlotTagger
 
 
 EVALUATION_SAMPLES: List[Dict[str, object]] = [
@@ -309,13 +314,27 @@ def evaluate(parser: HybridPathNLP, samples: List[Dict[str, object]]) -> Dict[st
         "semantic_frame": 0,
         "fallback": 0,
     }
+    slot_source_counts = Counter()
+    fallback_reason_counts = Counter()
+    fallback_examples = []
     errors = []
 
     for sample in samples:
         debug = _parse_with_debug(parser, sample["text"])
         predicted = debug["result"]
+        slot_source_counts[debug.get("slot_source", "unknown")] += 1
         if debug["used_fallback"]:
             counters["fallback"] += 1
+            reason = debug.get("fallback_reason") or "unknown"
+            fallback_reason_counts[reason] += 1
+            fallback_examples.append(
+                {
+                    "text": sample["text"],
+                    "model_slots": debug.get("model_slots"),
+                    "fallback_reason": reason,
+                    "final_result": predicted,
+                }
+            )
 
         error_fields = []
         for field, counter_name in [
@@ -361,11 +380,14 @@ def evaluate(parser: HybridPathNLP, samples: List[Dict[str, object]]) -> Dict[st
         "semantic_frame_accuracy": counters["semantic_frame"] / total,
         "fallback_count": counters["fallback"],
         "fallback_rate": counters["fallback"] / total,
+        "slot_source_counts": dict(slot_source_counts),
+        "fallback_reason_counts": dict(fallback_reason_counts),
+        "fallback_examples": fallback_examples,
         "errors": errors,
     }
 
 
-def print_report(metrics: Dict[str, object]) -> None:
+def print_report(metrics: Dict[str, object], verbose: bool = False) -> None:
     total = metrics["total_samples"]
     print(f"Total samples: {total}")
     print(f"Intent accuracy: {metrics['intent_accuracy']:.4f}")
@@ -377,6 +399,22 @@ def print_report(metrics: Dict[str, object]) -> None:
     print(f"Semantic frame accuracy: {metrics['semantic_frame_accuracy']:.4f}")
     print(f"Fallback used: {metrics['fallback_count']} / {total}")
     print(f"Fallback rate: {metrics['fallback_rate']:.4f}")
+    print(f"Slot source model: {metrics['slot_source_counts'].get('model', 0)}")
+    print(f"Slot source fallback: {metrics['slot_source_counts'].get('fallback', 0)}")
+    print("Fallback reason counts:")
+    if metrics["fallback_reason_counts"]:
+        for reason, count in sorted(metrics["fallback_reason_counts"].items()):
+            print(f"- {reason}: {count}")
+    else:
+        print("- none: 0")
+
+    if verbose and metrics["fallback_examples"]:
+        print("\nFallback examples:")
+        for example in metrics["fallback_examples"]:
+            print(f"\ntext: {example['text']}")
+            print("model slots:", json.dumps(example["model_slots"], ensure_ascii=False))
+            print("fallback reason:", example["fallback_reason"])
+            print("final result:", json.dumps(example["final_result"], ensure_ascii=False))
 
     errors = metrics["errors"]
     if not errors:
@@ -397,7 +435,13 @@ def _parse_with_debug(parser: HybridPathNLP, text: str) -> Dict[str, object]:
     parse_with_debug = getattr(parser, "parse_with_debug", None)
     if callable(parse_with_debug):
         return parse_with_debug(text)
-    return {"result": parser.parse(text), "used_fallback": False, "slot_source": "unknown"}
+    return {
+        "result": parser.parse(text),
+        "used_fallback": False,
+        "slot_source": "unknown",
+        "fallback_reason": None,
+        "model_slots": None,
+    }
 
 
 def _expected_result(sample: Dict[str, object]) -> Dict[str, object]:
@@ -411,9 +455,38 @@ def _expected_result(sample: Dict[str, object]) -> Dict[str, object]:
     }
 
 
+def build_parser(args) -> HybridPathNLP:
+    if args.model_path and os.path.exists(args.model_path):
+        return HybridPathNLP(slot_tagger=BiLSTMCRFSlotTagger(model_path=args.model_path))
+
+    if args.no_eval_slot_training:
+        return HybridPathNLP()
+
+    samples = generate_bio_training_data(limit=args.eval_train_limit)
+    tagger = BiLSTMCRFSlotTagger(
+        embedding_dim=args.embedding_dim,
+        hidden_dim=args.hidden_dim,
+        dropout=args.dropout,
+    )
+    tagger.fit(samples, epochs=args.eval_train_epochs, learning_rate=args.lr)
+    return HybridPathNLP(slot_tagger=tagger)
+
+
 def main() -> None:
-    parser = HybridPathNLP()
-    print_report(evaluate(parser, EVALUATION_SAMPLES))
+    arg_parser = argparse.ArgumentParser(description="Evaluate HybridPathNLP.")
+    arg_parser.add_argument("--model-path", default="slot_tagger.pkl")
+    arg_parser.add_argument("--no-eval-slot-training", action="store_true")
+    arg_parser.add_argument("--eval-train-limit", type=int, default=None)
+    arg_parser.add_argument("--eval-train-epochs", type=int, default=0)
+    arg_parser.add_argument("--embedding-dim", type=int, default=32)
+    arg_parser.add_argument("--hidden-dim", type=int, default=64)
+    arg_parser.add_argument("--dropout", type=float, default=0.0)
+    arg_parser.add_argument("--lr", type=float, default=0.005)
+    arg_parser.add_argument("--verbose", action="store_true")
+    args = arg_parser.parse_args()
+
+    parser = build_parser(args)
+    print_report(evaluate(parser, EVALUATION_SAMPLES), verbose=args.verbose)
 
 
 if __name__ == "__main__":

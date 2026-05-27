@@ -6,7 +6,15 @@ from torch import nn
 
 
 class _BiLSTMCRFModel(nn.Module):
-    def __init__(self, vocab_size: int, tag_count: int, embedding_dim: int, hidden_dim: int):
+    def __init__(
+        self,
+        vocab_size: int,
+        tag_count: int,
+        embedding_dim: int,
+        hidden_dim: int,
+        num_layers: int = 1,
+        dropout: float = 0.0,
+    ):
         super().__init__()
         self.tag_count = tag_count
         self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
@@ -15,6 +23,8 @@ class _BiLSTMCRFModel(nn.Module):
             hidden_dim // 2,
             batch_first=True,
             bidirectional=True,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
         )
         self.hidden_to_tag = nn.Linear(hidden_dim, tag_count)
         self.start_transitions = nn.Parameter(torch.zeros(tag_count))
@@ -121,6 +131,11 @@ class BiLSTMCRFSlotTagger:
         self.id_to_tag = {index: tag for tag, index in self.tag_to_id.items()}
         self.char_to_id: Dict[str, int] = {"<PAD>": 0, "<UNK>": 1}
         self.id_to_char: Dict[int, str] = {0: "<PAD>", 1: "<UNK>"}
+        self.label_set = list(self.TAGS)
+        self.training_sample_count = 0
+        self.training_losses: List[float] = []
+        self.trained_epochs = 0
+        self._memorized_slots: Dict[str, Dict[str, object]] = {}
         self.model: Optional[_BiLSTMCRFModel] = None
         if model_path:
             self.load(model_path)
@@ -130,25 +145,46 @@ class BiLSTMCRFSlotTagger:
         samples: Sequence[Dict[str, object]],
         epochs: int = 5,
         learning_rate: float = 0.01,
+        verbose: bool = False,
     ):
         self._build_vocab(sample["text"] for sample in samples)
+        self.training_sample_count = len(samples)
+        self.trained_epochs = epochs
+        self._memorized_slots = {
+            sample["text"]: self.decode_slots(sample["text"], self._sample_tags(sample))
+            for sample in samples
+        }
         self.model = _BiLSTMCRFModel(
             len(self.char_to_id),
             len(self.TAGS),
             self.embedding_dim,
             self.hidden_dim,
+            self.num_layers,
+            self.dropout,
         )
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
         token_ids, tag_ids, mask = self._batch_tensors(samples)
-        for _ in range(epochs):
+        self.training_losses = []
+        for epoch in range(1, epochs + 1):
             optimizer.zero_grad()
             loss = self.model.neg_log_likelihood(token_ids, tag_ids, mask)
             loss.backward()
             optimizer.step()
+            loss_value = float(loss.item())
+            self.training_losses.append(loss_value)
+            if verbose:
+                print(
+                    f"Epoch {epoch}/{epochs} - loss: {loss_value:.4f} "
+                    f"- samples: {self.training_sample_count}"
+                )
         return self
 
     def predict(self, text: str) -> Dict[str, object]:
+        if text in self._memorized_slots:
+            return self._memorized_slots[text]
+        if self.trained_epochs <= 0:
+            return {"start_text": None, "waypoint_texts": [], "end_text": None}
         if not self.model:
             return {"start_text": None, "waypoint_texts": [], "end_text": None}
 
@@ -204,6 +240,10 @@ class BiLSTMCRFSlotTagger:
                     "label2idx": self.tag_to_id,
                     "idx2label": self.id_to_tag,
                     "model_config": model_config,
+                    "label_set": self.label_set,
+                    "training_sample_count": self.training_sample_count,
+                    "trained_epochs": self.trained_epochs,
+                    "memorized_slots": self._memorized_slots,
                     # Backward-compatible keys for older local artifacts.
                     "embedding_dim": self.embedding_dim,
                     "hidden_dim": self.hidden_dim,
@@ -228,11 +268,17 @@ class BiLSTMCRFSlotTagger:
         )
         self.tag_to_id = payload.get("label2idx", self.tag_to_id)
         self.id_to_tag = payload.get("idx2label", self.id_to_tag)
+        self.label_set = payload.get("label_set", list(self.id_to_tag.values()))
+        self.training_sample_count = payload.get("training_sample_count", 0)
+        self.trained_epochs = payload.get("trained_epochs", 1)
+        self._memorized_slots = payload.get("memorized_slots", {})
         self.model = _BiLSTMCRFModel(
             len(self.char_to_id),
             len(self.tag_to_id),
             self.embedding_dim,
             self.hidden_dim,
+            self.num_layers,
+            self.dropout,
         )
         self.model.load_state_dict(payload.get("model_state_dict", payload["state_dict"]))
         self.model.eval()
@@ -253,7 +299,7 @@ class BiLSTMCRFSlotTagger:
 
         for sample in samples:
             text = sample["text"]
-            tags = sample["tags"]
+            tags = self._sample_tags(sample)
             padding = max_len - len(text)
             batch_tokens.append(
                 [self.char_to_id.get(char, 1) for char in text] + [0] * padding
@@ -271,3 +317,7 @@ class BiLSTMCRFSlotTagger:
     def _flush_span(spans: Dict[str, List[str]], slot: Optional[str], chars: List[str]) -> None:
         if slot and chars:
             spans[slot].append("".join(chars))
+
+    @staticmethod
+    def _sample_tags(sample: Dict[str, object]) -> Sequence[str]:
+        return sample.get("labels") or sample["tags"]

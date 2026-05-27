@@ -3,7 +3,7 @@ import os
 import tempfile
 
 from color_normalizer import ColorNormalizer
-from generate_training_data import generate_bio_training_data
+from generate_training_data import generate_bio_training_data, validate_bio_sample
 from hybrid_path_nlp import HybridPathNLP
 from intent_classifier import IntentClassifier
 from slot_tagger import BiLSTMCRFSlotTagger
@@ -176,7 +176,7 @@ class HybridNLPTest(unittest.TestCase):
         debug = parser.parse_with_debug("从蓝色点到绿色点")
 
         self.assertTrue(debug["used_fallback"])
-        self.assertEqual(debug["fallback_reason"], "unmapped_required_color")
+        self.assertEqual(debug["fallback_reason"], "normalization_failed:end")
         self.assertEqual(debug["result"]["end"], "green")
 
     def test_hybrid_parser_returns_unknown_for_unknown_intent(self):
@@ -255,9 +255,16 @@ class HybridNLPTest(unittest.TestCase):
 
         self.assertEqual(len(samples), 5)
         for sample in samples:
-            self.assertEqual(len(sample["text"]), len(sample["tags"]))
+            self.assertEqual(len(sample["text"]), len(sample["tokens"]))
+            self.assertEqual(len(sample["tokens"]), len(sample["labels"]))
+            self.assertEqual(sample["labels"], sample["tags"])
             self.assertIn("intent", sample)
-            self.assertTrue(set(sample["tags"]).issubset(set(BiLSTMCRFSlotTagger.TAGS)))
+            self.assertTrue(validate_bio_sample(sample))
+
+    def test_generate_bio_training_data_default_is_large(self):
+        samples = generate_bio_training_data()
+
+        self.assertGreaterEqual(len(samples), 1000)
 
     def test_slot_tagger_save_load_predict_format(self):
         samples = [
@@ -296,9 +303,55 @@ class HybridNLPTest(unittest.TestCase):
             self.assertEqual(loaded.id_to_char[loaded.char_to_id["蓝"]], "蓝")
             self.assertEqual(loaded.tag_to_id["B-START"], 1)
             self.assertEqual(loaded.id_to_tag[1], "B-START")
+            self.assertEqual(loaded.training_sample_count, 1)
+            self.assertEqual(loaded.label_set, list(BiLSTMCRFSlotTagger.TAGS))
         finally:
             if os.path.exists(model_path):
                 os.remove(model_path)
+
+    def test_trained_slot_tagger_can_drive_hybrid_model_path(self):
+        samples = [
+            {
+                "text": "从蓝色点到绿色点",
+                "intent": "navigation",
+                "tokens": list("从蓝色点到绿色点"),
+                "labels": [
+                    "O",
+                    "B-START",
+                    "I-START",
+                    "I-START",
+                    "O",
+                    "B-END",
+                    "I-END",
+                    "I-END",
+                ],
+                "tags": [
+                    "O",
+                    "B-START",
+                    "I-START",
+                    "I-START",
+                    "O",
+                    "B-END",
+                    "I-END",
+                    "I-END",
+                ],
+            }
+        ]
+        tagger = BiLSTMCRFSlotTagger(embedding_dim=8, hidden_dim=16)
+        tagger.fit(samples, epochs=1)
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=tagger,
+        )
+
+        debug = parser.parse_with_debug("从蓝色点到绿色点")
+        plain = parser.parse("从蓝色点到绿色点")
+
+        self.assertEqual(debug["slot_source"], "model")
+        self.assertFalse(debug["used_fallback"])
+        self.assertIsNone(debug["fallback_reason"])
+        self.assertIn("model_slots", debug)
+        self.assertEqual(set(plain.keys()), self.EXPECTED_PARSE_KEYS)
 
 
 if __name__ == "__main__":

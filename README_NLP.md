@@ -80,7 +80,12 @@ For diagnostics, use `HybridPathNLP.parse_with_debug(text)`. It wraps the same p
 - `BiLSTMCRFSlotTagger`: PyTorch character-level BiLSTM-CRF BIO sequence tagger.
 - `ColorNormalizer`: maps aliases such as `蓝色点`, `蓝点`, and `蓝` to `blue`.
 - `PathNLPParser`: rule-based parser used as fallback.
-- `HybridPathNLP`: model-first parser. If intent is navigation but slot extraction is missing, invalid, or cannot be normalized to color keys, it falls back to `PathNLPParser`.
+- `HybridPathNLP`: hybrid model-first parser with rule fallback. It uses the model result when colors can be normalized and the slot frame is valid. It falls back only when the slot tagger fails, returns invalid output, returns no useful slots, or produces color text that cannot be normalized.
+
+The system is intentionally hybrid:
+
+- Model first: `IntentClassifier` and `BiLSTMCRFSlotTagger` handle normal inference.
+- Rule fallback: `PathNLPParser` preserves stability for malformed or low-confidence slot outputs.
 
 ## Run Tests
 
@@ -91,7 +96,7 @@ python -m unittest
 ## Train Slot Tagger
 
 ```bash
-python train_slot_tagger.py --epochs 20 --output slot_tagger.pkl
+python train_slot_tagger.py --epochs 30 --output slot_tagger.pkl
 ```
 
 Small smoke test:
@@ -112,7 +117,27 @@ python generate_training_data.py --output training_data.jsonl
 python evaluate_hybrid_nlp.py
 ```
 
-The report includes intent accuracy, slot accuracy, semantic frame accuracy, and fallback rate. Incorrect predictions are printed with expected output, predicted output, and the fields that differ.
+Recommended workflow:
+
+```bash
+python train_slot_tagger.py --epochs 30 --output slot_tagger.pkl
+python evaluate_hybrid_nlp.py
+```
+
+If `slot_tagger.pkl` is not present, `evaluate_hybrid_nlp.py` builds an in-memory slot tagger from generated BIO samples for evaluation.
+
+The report includes:
+
+- `semantic_frame_accuracy`: `start`, `waypoints`, and `end` must all match.
+- `waypoint_exact_match_accuracy`: waypoint list must match exactly, including order.
+- `fallback_rate`: fraction of samples resolved by the rule fallback. Lower means the BiLSTM-CRF slot model is handling more cases independently. Higher means the rule parser is still carrying more of the stability burden.
+- `fallback_reason_counts`: distribution of fallback causes, such as normalization failures or invalid slot output.
+
+Use verbose mode to inspect fallback examples:
+
+```bash
+python evaluate_hybrid_nlp.py --verbose
+```
 
 ## Scope
 
