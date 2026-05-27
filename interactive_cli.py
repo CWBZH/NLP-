@@ -8,6 +8,11 @@ def main() -> None:
     print("Path NLP interactive CLI")
     print("输入中文路径请求，系统会输出 NLP 解析 JSON。")
     print("输入 exit 或 quit 退出。")
+    status = parser.model_status()
+    if status["model_loaded"]:
+        print(f"loaded slot tagger from {status['model_path']}")
+    else:
+        print("slot_tagger.pkl not found, using fallback-heavy mode")
 
     while True:
         try:
@@ -29,6 +34,9 @@ def main() -> None:
             "slot_source": debug.get("slot_source"),
             "fallback_reason": debug.get("fallback_reason"),
             "model_slots": debug.get("model_slots"),
+            "model_loaded": debug.get("model_loaded"),
+            "model_path": debug.get("model_path"),
+            "warning": debug.get("warning"),
         }
 
         print(json.dumps(result, ensure_ascii=False, indent=2))

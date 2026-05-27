@@ -19,6 +19,13 @@ class PathNLPDemo:
         self.root = root
         self.parser = HybridPathNLP()
         self.root.title("Path NLP Parser Demo")
+        status = self.parser.model_status()
+        if status["model_loaded"]:
+            status_text = f"loaded slot tagger from {status['model_path']}"
+        else:
+            status_text = "slot_tagger.pkl not found, using fallback-heavy mode"
+        self.status_label = tk.Label(root, text=status_text, anchor="w")
+        self.status_label.pack(fill=tk.X, padx=10, pady=(8, 0))
 
         self.input_box = tk.Text(root, height=6, width=80)
         self.input_box.pack(fill=tk.BOTH, padx=10, pady=(10, 6))
@@ -50,6 +57,9 @@ class PathNLPDemo:
                 "slot_source": debug.get("slot_source"),
                 "fallback_reason": debug.get("fallback_reason"),
                 "model_slots": debug.get("model_slots"),
+                "model_loaded": debug.get("model_loaded"),
+                "model_path": debug.get("model_path"),
+                "warning": debug.get("warning"),
             },
         }
         self.output_box.delete("1.0", tk.END)

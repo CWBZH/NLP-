@@ -108,6 +108,20 @@ MISSING_START_WITH_WAYPOINT_TEMPLATES = (
 )
 
 
+AVOID_ONLY_TEMPLATES = (
+    "从{START}到{END}，不经过{AVOID}",
+    "从{START}到{END}，不要经过{AVOID}",
+    "从{START}到{END}，避开{AVOID}",
+    "从{START}到{END}，绕开{AVOID}",
+)
+
+
+WAYPOINT_WITH_AVOID_TEMPLATES = (
+    "从{START}经过{WP}到{END}，不经过{AVOID}",
+    "从{START}出发，经过{WP}，最后到{END}，不要经过{AVOID}",
+)
+
+
 def generate_bio_training_data(limit: Optional[int] = None) -> List[Dict[str, object]]:
     samples = []
     seen = set()
@@ -196,6 +210,33 @@ def _iter_bio_samples() -> Iterable[Dict[str, object]]:
                     end_text=end_text,
                 )
 
+    for start, end, avoid in permutations(colors, 3):
+        for variant in range(_max_alias_count(start, end, avoid)):
+            start_text, end_text, avoid_text = _aliases_for_tuple(
+                start, end, avoid, variant=variant
+            )
+            for template in AVOID_ONLY_TEMPLATES:
+                yield _sample(
+                    template,
+                    start_text=start_text,
+                    end_text=end_text,
+                    avoid_text=avoid_text,
+                )
+
+    for start, waypoint, end, avoid in permutations(colors, 4):
+        for variant in range(_max_alias_count(start, waypoint, end, avoid)):
+            start_text, waypoint_text, end_text, avoid_text = _aliases_for_tuple(
+                start, waypoint, end, avoid, variant=variant
+            )
+            for template in WAYPOINT_WITH_AVOID_TEMPLATES:
+                yield _sample(
+                    template,
+                    start_text=start_text,
+                    waypoint_texts=[waypoint_text],
+                    end_text=end_text,
+                    avoid_text=avoid_text,
+                )
+
     for start, waypoint_a, waypoint_b, end in permutations(colors, 4):
         for variant in range(_max_alias_count(start, waypoint_a, waypoint_b, end)):
             start_text, waypoint_a_text, waypoint_b_text, end_text = _aliases_for_tuple(
@@ -221,6 +262,7 @@ def _sample(
     start_text: Optional[str] = None,
     waypoint_texts: Optional[Sequence[str]] = None,
     end_text: Optional[str] = None,
+    avoid_text: Optional[str] = None,
 ) -> Dict[str, object]:
     waypoint_texts = list(waypoint_texts or [])
     text = template.format(
@@ -229,6 +271,7 @@ def _sample(
         WP1=waypoint_texts[0] if waypoint_texts else "",
         WP2=waypoint_texts[1] if len(waypoint_texts) > 1 else "",
         END=end_text or "",
+        AVOID=avoid_text or "",
     )
     labels = ["O"] * len(text)
     _tag_span(text, labels, start_text, "START")

@@ -74,6 +74,10 @@ class PathNLPParser:
             r"(?:经过|途经|途径|路过)\s*"
             r"(?P<body>.*?)(?=(?:最后\s*)?(?:到|去)|[，,。；;]|$)"
         )
+        self._avoid_re = re.compile(
+            rf"(?:不经过|不要经过|别经过|不路过|不要路过|避开|绕开|不走|不要走)\s*"
+            rf"(?P<color>{alias_pattern})"
+        )
 
     def parse(self, text):
         if not isinstance(text, str):
@@ -157,10 +161,15 @@ class PathNLPParser:
 
     def _extract_waypoints(self, text: str) -> List[str]:
         waypoints = []
+        avoid_ranges = self._avoid_ranges(text)
         for match in self._waypoint_re.finditer(text):
             body_start = match.start("body")
             body = match.group("body")
-            waypoints.extend(mention.color for mention in self._find_colors(body, body_start))
+            waypoints.extend(
+                mention.color
+                for mention in self._find_colors(body, body_start)
+                if not self._in_ranges(mention, avoid_ranges)
+            )
         waypoints.extend(self._destination_sequence_waypoints(text, waypoints))
         return waypoints
 
@@ -199,10 +208,15 @@ class PathNLPParser:
 
     def _waypoint_ranges(self, text: str) -> List[tuple]:
         ranges = []
+        avoid_ranges = self._avoid_ranges(text)
         for match in self._waypoint_re.finditer(text):
             body_start = match.start("body")
             body = match.group("body")
-            ranges.extend((mention.start, mention.end) for mention in self._find_colors(body, body_start))
+            ranges.extend(
+                (mention.start, mention.end)
+                for mention in self._find_colors(body, body_start)
+                if not self._in_ranges(mention, avoid_ranges)
+            )
 
         end_matches = list(self._end_re.finditer(text))
         if len(end_matches) >= 2:
@@ -210,6 +224,12 @@ class PathNLPParser:
                 (match.start("color"), match.end("color")) for match in end_matches[:-1]
             )
         return ranges
+
+    def _avoid_ranges(self, text: str) -> List[tuple]:
+        return [
+            (match.start("color"), match.end("color"))
+            for match in self._avoid_re.finditer(text)
+        ]
 
     @staticmethod
     def _in_ranges(mention: _ColorMention, ranges: List[tuple]) -> bool:

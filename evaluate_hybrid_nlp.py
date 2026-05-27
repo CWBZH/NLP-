@@ -166,6 +166,11 @@ EVALUATION_SAMPLES: List[Dict[str, object]] = [
     nav("从红色点到赤色点", "red", [], "red"),
     nav("从绿色点到青色点，经过蓝色点", "green", ["blue"], "cyan"),
     nav("从蓝色点到绿色点，不经过紫色点", "blue", [], "green"),
+    nav("我要从蓝色点出发，经过紫，到蓝色，不要经过黄色", "blue", ["purple"], "blue"),
+    nav("从红点到蓝点，途径橙点，避开黄色点", "red", ["orange"], "blue"),
+    nav("从青点到紫点，先经过绿点，不要路过橙点", "cyan", ["green"], "purple"),
+    nav("从蓝到红，绕开黄，经过紫", "blue", ["purple"], "red"),
+    nav("从橙到青，不走红，经过绿", "orange", ["green"], "cyan"),
     nav("从青点到蓝点，经过红点", "cyan", ["red"], "blue"),
     nav("从蓝点到青点，经过赤点", "blue", ["red"], "cyan"),
     # Abnormal input.

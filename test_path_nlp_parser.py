@@ -192,6 +192,46 @@ class PathNLPParserTest(unittest.TestCase):
             },
         )
 
+    def test_parse_ignores_negative_waypoint_phrases(self):
+        cases = [
+            (
+                "从蓝色点到绿色点，不经过紫色点",
+                "blue",
+                [],
+                "green",
+            ),
+            (
+                "我要从蓝色点出发，经过紫，到蓝色，不要经过黄色",
+                "blue",
+                ["purple"],
+                "blue",
+            ),
+            (
+                "从红点到蓝点，途径橙点，避开黄色点",
+                "red",
+                ["orange"],
+                "blue",
+            ),
+            (
+                "从青点到紫点，先经过绿点，不要路过橙点",
+                "cyan",
+                ["green"],
+                "purple",
+            ),
+            (
+                "从蓝到红，绕开黄，经过紫",
+                "blue",
+                ["purple"],
+                "red",
+            ),
+        ]
+
+        for text, start, waypoints, end in cases:
+            result = self.parser.parse(text)
+            self.assertEqual(result["start"], start)
+            self.assertEqual(result["waypoints"], waypoints)
+            self.assertEqual(result["end"], end)
+
 
 if __name__ == "__main__":
     unittest.main()

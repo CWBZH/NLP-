@@ -153,6 +153,14 @@ GUI window test:
 python interactive_gui.py
 ```
 
+Before running the CLI or GUI with the trained slot model, train and save the model in the project directory:
+
+```bash
+python train_slot_tagger.py --epochs 30 --output slot_tagger.pkl
+```
+
+If `slot_tagger.pkl` is present, CLI and GUI show `loaded slot tagger from slot_tagger.pkl`. If it is missing, they show `slot_tagger.pkl not found, using fallback-heavy mode`, and `parse_with_debug` includes `model_loaded: false`.
+
 Automated evaluation:
 
 ```bash
@@ -168,6 +176,10 @@ python -m unittest
 Recommended manual test sentences:
 
 - 从蓝色点到绿色点
+- 从蓝色点到绿色点，不经过紫色点
+- 我要从蓝色点出发，经过紫，到蓝色，不要经过黄色
+- 从红点到蓝点，途径橙点，避开黄色点
+- 从青点到紫点，先经过绿点，不要路过橙点
 - 蓝到绿
 - 去绿色点，从蓝色点出发
 - 从蓝色点出发，经过青色点，最后到绿色点
@@ -180,6 +192,8 @@ Recommended manual test sentences:
 - 今天天气怎么样
 
 `parse(text)` returns only the stable backend-facing fields. `parse_with_debug(text)` is for local debugging of model output and fallback behavior. The CLI and GUI tools are local test aids only; they do not change the backend interface.
+
+Avoid constraints such as `不经过紫色点`, `不要经过黄色`, `避开黄色点`, and `绕开黄` are recognized only so they are not incorrectly added to `waypoints`. The current backend-facing schema has no `avoid` field, so avoid points are ignored in the final parse result.
 
 ## Scope
 

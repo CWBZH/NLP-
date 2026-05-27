@@ -141,6 +141,16 @@ class HybridNLPTest(unittest.TestCase):
         self.assertFalse(debug["used_fallback"])
         self.assertEqual(debug["slot_source"], "model")
         self.assertIsNone(debug["fallback_reason"])
+        self.assertIn("model_loaded", debug)
+        self.assertIn("model_path", debug)
+
+    def test_default_debug_reports_model_load_status(self):
+        debug = HybridPathNLP().parse_with_debug("从蓝色点到绿色点")
+
+        self.assertIn("model_loaded", debug)
+        self.assertIn("model_path", debug)
+        if not debug["model_loaded"]:
+            self.assertIn("warning", debug)
 
     def test_hybrid_parser_falls_back_when_slots_are_missing(self):
         parser = HybridPathNLP(
@@ -360,6 +370,11 @@ class HybridNLPTest(unittest.TestCase):
         for sample in EVALUATION_SAMPLES:
             self.assertTrue(self.EXPECTED_PARSE_KEYS.issubset(sample.keys()))
 
+    def test_evaluation_samples_include_negative_waypoints(self):
+        avoid_samples = [sample for sample in EVALUATION_SAMPLES if "不" in sample["text"] or "避开" in sample["text"] or "绕开" in sample["text"]]
+
+        self.assertGreaterEqual(len(avoid_samples), 6)
+
     def test_default_hybrid_parser_realistic_cases(self):
         parser = HybridPathNLP()
 
@@ -371,6 +386,7 @@ class HybridNLPTest(unittest.TestCase):
             ("从青色点到蓝色点", "cyan", [], "blue"),
             ("从蓝色点到青色点", "blue", [], "cyan"),
             ("从蓝色点到绿色点，不经过紫色点", "blue", [], "green"),
+            ("我要从蓝色点出发，经过紫，到蓝色，不要经过黄色", "blue", ["purple"], "blue"),
         ]
 
         for text, start, waypoints, end in cases:
@@ -389,6 +405,17 @@ class HybridNLPTest(unittest.TestCase):
     def test_interactive_tools_are_importable(self):
         self.assertIsNotNone(importlib.import_module("interactive_cli"))
         self.assertIsNotNone(importlib.import_module("interactive_gui"))
+
+    def test_negative_training_sample_labels_avoid_color_as_o(self):
+        samples = generate_bio_training_data()
+        sample = next(
+            sample
+            for sample in samples
+            if sample["text"] == "从蓝到绿，不经过紫"
+        )
+        avoid_index = sample["text"].index("紫")
+
+        self.assertEqual(sample["labels"][avoid_index], "O")
 
 
 if __name__ == "__main__":

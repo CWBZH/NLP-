@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List, Optional, Tuple
 
 from color_normalizer import ColorNormalizer
@@ -15,11 +16,34 @@ class HybridPathNLP:
         slot_tagger: Optional[BiLSTMCRFSlotTagger] = None,
         fallback_parser: Optional[PathNLPParser] = None,
         color_normalizer: Optional[ColorNormalizer] = None,
+        model_path: str = "slot_tagger.pkl",
     ):
         self.intent_classifier = intent_classifier or IntentClassifier()
-        self.slot_tagger = slot_tagger or BiLSTMCRFSlotTagger()
+        self.model_loaded = False
+        self.model_path = None
+        self.model_warning = None
+        if slot_tagger is not None:
+            self.slot_tagger = slot_tagger
+            self.model_loaded = getattr(slot_tagger, "model", None) is not None
+            self.model_path = None
+        elif model_path and os.path.exists(model_path):
+            self.slot_tagger = BiLSTMCRFSlotTagger(model_path=model_path)
+            self.model_loaded = True
+            self.model_path = model_path
+        else:
+            self.slot_tagger = BiLSTMCRFSlotTagger()
+            self.model_warning = (
+                "slot_tagger.pkl not found; using untrained slot tagger and fallback may be used frequently"
+            )
         self.fallback_parser = fallback_parser or PathNLPParser()
         self.color_normalizer = color_normalizer or ColorNormalizer()
+
+    def model_status(self) -> Dict[str, object]:
+        return {
+            "model_loaded": self.model_loaded,
+            "model_path": self.model_path,
+            "warning": self.model_warning,
+        }
 
     def parse(self, text: str) -> Dict[str, object]:
         return self.parse_with_debug(text)["result"]
@@ -33,6 +57,7 @@ class HybridPathNLP:
                 "fallback_reason": None,
                 "slot_source": "none",
                 "model_slots": None,
+                **self.model_status(),
             }
 
         if not self._is_navigation_like(intent):
@@ -50,6 +75,7 @@ class HybridPathNLP:
                 "fallback_reason": None,
                 "slot_source": "model",
                 "model_slots": model_slots,
+                **self.model_status(),
             }
 
         return self._fallback_result(text, fallback_reason, model_slots)
@@ -139,6 +165,7 @@ class HybridPathNLP:
             "fallback_reason": reason,
             "slot_source": "fallback",
             "model_slots": model_slots,
+            **self.model_status(),
         }
 
     @staticmethod
