@@ -63,6 +63,17 @@ class HybridPathNLP:
         if not self._is_navigation_like(intent):
             return self._fallback_result(text, "unsupported_intent", None)
 
+        fallback_preview = self.fallback_parser.parse(text)
+        if fallback_preview["intent"] == "unknown":
+            return {
+                "result": fallback_preview,
+                "used_fallback": True,
+                "fallback_reason": "fallback_unknown_intent",
+                "slot_source": "fallback",
+                "model_slots": None,
+                **self.model_status(),
+            }
+
         try:
             model_result, fallback_reason, model_slots = self._parse_with_slot_model(text)
         except Exception as error:
@@ -100,7 +111,7 @@ class HybridPathNLP:
 
         start = self.color_normalizer.normalize(start_text) if start_text else None
         end = self.color_normalizer.normalize(end_text) if end_text else None
-        waypoints, unmapped_waypoint = self._normalize_waypoints(waypoint_texts)
+        waypoints, unmapped_waypoint = self._normalize_waypoints(waypoint_texts, text)
 
         if start_text and start is None:
             return None, "normalization_failed:start", slots
@@ -130,13 +141,16 @@ class HybridPathNLP:
             "missing_slots": missing_slots,
         }, "", slots
 
-    def _normalize_waypoints(self, waypoint_texts: List[str]) -> Tuple[List[str], bool]:
+    def _normalize_waypoints(self, waypoint_texts: List[str], text: str) -> Tuple[List[str], bool]:
         waypoints = []
+        ignored_avoid_points = self._avoid_colors(text)
         for waypoint_text in waypoint_texts:
             if not waypoint_text or not isinstance(waypoint_text, str):
                 return waypoints, True
             waypoint = self.color_normalizer.normalize(waypoint_text)
             if waypoint is not None:
+                if waypoint in ignored_avoid_points:
+                    continue
                 waypoints.append(waypoint)
             else:
                 return waypoints, True
@@ -155,6 +169,17 @@ class HybridPathNLP:
     @staticmethod
     def _text_has_end_expression(text: str) -> bool:
         return "到" in text or "去" in text or "终点" in text or "最后" in text
+
+    def _avoid_colors(self, text: str) -> set:
+        colors = set()
+        avoid_ranges = getattr(self.fallback_parser, "_avoid_ranges", lambda _: [])(text)
+        find_colors = getattr(self.fallback_parser, "_find_colors", None)
+        if not callable(find_colors):
+            return colors
+        for mention in find_colors(text):
+            if any(mention.start >= start and mention.end <= end for start, end in avoid_ranges):
+                colors.add(mention.color)
+        return colors
 
     def _fallback_result(
         self, text: str, reason: str, model_slots: Optional[Dict[str, object]]
