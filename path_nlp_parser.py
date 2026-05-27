@@ -36,6 +36,15 @@ class PathNLPParser:
         "路线",
         "导航",
         "怎么走",
+        "走到",
+        "想去",
+        "目标",
+        "起点",
+        "终点",
+        "开始",
+        "我在",
+        "现在在",
+        "找一条",
     )
 
     def __init__(self):
@@ -51,9 +60,18 @@ class PathNLPParser:
         self._color_re = re.compile(alias_pattern)
         self._from_re = re.compile(rf"从\s*(?P<color>{alias_pattern})")
         self._depart_re = re.compile(rf"(?P<color>{alias_pattern})\s*出发")
-        self._end_re = re.compile(rf"(?:最后\s*)?(?:到|去)\s*(?P<color>{alias_pattern})")
+        self._start_res = [
+            re.compile(rf"从\s*(?P<color>{alias_pattern})"),
+            re.compile(rf"(?:起点是|我现在在|现在在|我在)\s*(?P<color>{alias_pattern})"),
+            re.compile(rf"(?P<color>{alias_pattern})\s*(?:出发|开始)"),
+        ]
+        self._end_re = re.compile(
+            rf"(?:最后\s*)?(?:走到|导航到|到|去|想去|目标是|终点是)\s*"
+            rf"(?P<color>{alias_pattern})"
+        )
         self._waypoint_re = re.compile(
-            r"(?:先\s*)?(?:再\s*)?(?:经过|途经|途径|路过)\s*"
+            r"(?<!不)(?:先\s*)?(?:再\s*)?(?:中间\s*)?(?:依次\s*)?"
+            r"(?:经过|途经|途径|路过)\s*"
             r"(?P<body>.*?)(?=(?:最后\s*)?(?:到|去)|[，,。；;]|$)"
         )
 
@@ -112,13 +130,10 @@ class PathNLPParser:
     def _extract_start(
         self, text: str, mentions: List[_ColorMention]
     ) -> Optional[str]:
-        match = self._from_re.search(text)
-        if match:
-            return self._alias_to_color[match.group("color")]
-
-        match = self._depart_re.search(text)
-        if match:
-            return self._alias_to_color[match.group("color")]
+        for pattern in self._start_res:
+            match = pattern.search(text)
+            if match:
+                return self._alias_to_color[match.group("color")]
 
         endpoint_match = self._last_end_match(text)
         if endpoint_match:
@@ -135,7 +150,7 @@ class PathNLPParser:
         return None
 
     def _extract_end(self, text: str) -> Optional[str]:
-        match = self._last_end_match(text)
+        match = self._explicit_target_before_waypoint_clause(text) or self._last_end_match(text)
         if match:
             return self._alias_to_color[match.group("color")]
         return None
@@ -146,7 +161,7 @@ class PathNLPParser:
             body_start = match.start("body")
             body = match.group("body")
             waypoints.extend(mention.color for mention in self._find_colors(body, body_start))
-        waypoints.extend(self._destination_sequence_waypoints(text))
+        waypoints.extend(self._destination_sequence_waypoints(text, waypoints))
         return waypoints
 
     def _last_end_match(self, text: str):
@@ -155,11 +170,32 @@ class PathNLPParser:
             return None
         return matches[-1]
 
-    def _destination_sequence_waypoints(self, text: str) -> List[str]:
+    def _destination_sequence_waypoints(self, text: str, existing: List[str]) -> List[str]:
         matches = list(self._end_re.finditer(text))
         if len(matches) < 2:
             return []
+        explicit_target = self._explicit_target_before_waypoint_clause(text)
+        if explicit_target:
+            return [
+                self._alias_to_color[match.group("color")]
+                for match in matches
+                if match.start() > explicit_target.end()
+                and self._alias_to_color[match.group("color")] not in existing
+            ]
         return [self._alias_to_color[match.group("color")] for match in matches[:-1]]
+
+    def _explicit_target_before_waypoint_clause(self, text: str):
+        matches = list(self._end_re.finditer(text))
+        if len(matches) < 2:
+            return None
+        for match in matches[:-1]:
+            prefix = text[:match.start()]
+            if not any(pattern.search(prefix) for pattern in self._start_res):
+                continue
+            tail = text[match.end():]
+            if re.match(r"\s*[，,]\s*(?:先|再)?(?:去|到|经过|途经|途径|路过)", tail):
+                return match
+        return None
 
     def _waypoint_ranges(self, text: str) -> List[tuple]:
         ranges = []

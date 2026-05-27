@@ -39,6 +39,13 @@ NO_WAYPOINT_TEMPLATES = (
     "去{END}，从{START}出发",
     "到{END}，从{START}出发",
     "终点是{END}，起点是{START}",
+    "到{END}，起点是{START}",
+    "目标是{END}，我从{START}出发",
+    "我想从{START}走到{END}",
+    "能不能帮我从{START}导航到{END}",
+    "帮我找一条{START}到{END}的路",
+    "我在{START}，想去{END}",
+    "从{START}开始，最后去{END}",
 )
 
 
@@ -55,6 +62,9 @@ ONE_WAYPOINT_TEMPLATES = (
     "{START}到{END}经过{WP}",
     "{START}出发，先去{WP}，最后到{END}",
     "先去{WP}，再到{END}，从{START}出发",
+    "{START}到{END}，路过{WP}",
+    "{START}到{END}，中间经过{WP}",
+    "{START}出发经过{WP}最后到{END}",
 )
 
 
@@ -68,6 +78,7 @@ TWO_WAYPOINT_TEMPLATES = (
     "{START}到{END}，先经过{WP1}，再经过{WP2}",
     "{START}到{END}，先去{WP1}，再去{WP2}",
     "从{START}出发，先去{WP1}，再到{WP2}，最后到{END}",
+    "从{START}先去{WP1}再去{WP2}最后到{END}",
 )
 
 
@@ -77,6 +88,7 @@ MISSING_START_TEMPLATES = (
     "帮我规划到{END}",
     "终点是{END}",
     "最后到{END}",
+    "我想去{END}",
 )
 
 
@@ -86,6 +98,7 @@ MISSING_END_TEMPLATES = (
     "起点是{START}",
     "从{START}开始",
     "我现在在{START}",
+    "我在{START}",
 )
 
 

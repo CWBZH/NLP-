@@ -1,0 +1,40 @@
+import json
+
+from hybrid_path_nlp import HybridPathNLP
+
+
+def main() -> None:
+    parser = HybridPathNLP()
+    print("Path NLP interactive CLI")
+    print("输入中文路径请求，系统会输出 NLP 解析 JSON。")
+    print("输入 exit 或 quit 退出。")
+
+    while True:
+        try:
+            text = input("\n> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if text.lower() in {"exit", "quit"}:
+            break
+        if not text:
+            print("请输入中文路径请求，或输入 exit / quit 退出。")
+            continue
+
+        debug = parser.parse_with_debug(text)
+        result = debug["result"]
+        debug_info = {
+            "used_fallback": debug.get("used_fallback"),
+            "slot_source": debug.get("slot_source"),
+            "fallback_reason": debug.get("fallback_reason"),
+            "model_slots": debug.get("model_slots"),
+        }
+
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("\nDebug:")
+        print(json.dumps(debug_info, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

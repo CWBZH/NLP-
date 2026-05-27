@@ -179,6 +179,19 @@ class PathNLPParserTest(unittest.TestCase):
             },
         )
 
+    def test_parse_target_before_later_go_waypoints(self):
+        self.assertParse(
+            "从紫点到青点，先去红点，再去黄点",
+            {
+                "intent": "navigation",
+                "start": "purple",
+                "waypoints": ["red", "yellow"],
+                "end": "cyan",
+                "is_complete": True,
+                "missing_slots": [],
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

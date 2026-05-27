@@ -139,6 +139,48 @@ Use verbose mode to inspect fallback examples:
 python evaluate_hybrid_nlp.py --verbose
 ```
 
+## Manual Testing
+
+Command-line interactive test:
+
+```bash
+python interactive_cli.py
+```
+
+GUI window test:
+
+```bash
+python interactive_gui.py
+```
+
+Automated evaluation:
+
+```bash
+python evaluate_hybrid_nlp.py
+```
+
+Unit tests:
+
+```bash
+python -m unittest
+```
+
+Recommended manual test sentences:
+
+- 从蓝色点到绿色点
+- 蓝到绿
+- 去绿色点，从蓝色点出发
+- 从蓝色点出发，经过青色点，最后到绿色点
+- 从蓝到红，途径黄和紫
+- 从红点先去橙点再去黄点最后到蓝点
+- 从青色点到蓝色点
+- 从蓝色点到青色点
+- 到绿色点
+- 从蓝色点出发
+- 今天天气怎么样
+
+`parse(text)` returns only the stable backend-facing fields. `parse_with_debug(text)` is for local debugging of model output and fallback behavior. The CLI and GUI tools are local test aids only; they do not change the backend interface.
+
 ## Scope
 
 This NLP module does not output coordinates. It does not perform path search. It only outputs `start`, `waypoints`, and `end` as color keys. The backend CV/MDP path-planning module is responsible for using those color keys to compute actual movement plans.

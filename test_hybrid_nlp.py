@@ -1,8 +1,10 @@
 import unittest
+import importlib
 import os
 import tempfile
 
 from color_normalizer import ColorNormalizer
+from evaluate_hybrid_nlp import EVALUATION_SAMPLES
 from generate_training_data import generate_bio_training_data, validate_bio_sample
 from hybrid_path_nlp import HybridPathNLP
 from intent_classifier import IntentClassifier
@@ -352,6 +354,41 @@ class HybridNLPTest(unittest.TestCase):
         self.assertIsNone(debug["fallback_reason"])
         self.assertIn("model_slots", debug)
         self.assertEqual(set(plain.keys()), self.EXPECTED_PARSE_KEYS)
+
+    def test_evaluation_samples_cover_realistic_inputs(self):
+        self.assertGreaterEqual(len(EVALUATION_SAMPLES), 80)
+        for sample in EVALUATION_SAMPLES:
+            self.assertTrue(self.EXPECTED_PARSE_KEYS.issubset(sample.keys()))
+
+    def test_default_hybrid_parser_realistic_cases(self):
+        parser = HybridPathNLP()
+
+        cases = [
+            ("从蓝色点出发，先经过青色点，再经过紫色点，最后到绿色点", "blue", ["cyan", "purple"], "green"),
+            ("去绿色点，从蓝色点出发", "blue", [], "green"),
+            ("帮我规划到绿色点", None, [], "green"),
+            ("从蓝色点出发", "blue", [], None),
+            ("从青色点到蓝色点", "cyan", [], "blue"),
+            ("从蓝色点到青色点", "blue", [], "cyan"),
+            ("从蓝色点到绿色点，不经过紫色点", "blue", [], "green"),
+        ]
+
+        for text, start, waypoints, end in cases:
+            result = parser.parse(text)
+            self.assertEqual(set(result.keys()), self.EXPECTED_PARSE_KEYS)
+            self.assertEqual(result["start"], start)
+            self.assertEqual(result["waypoints"], waypoints)
+            self.assertEqual(result["end"], end)
+
+    def test_default_hybrid_parser_unknown_input(self):
+        result = HybridPathNLP().parse("今天天气怎么样")
+
+        self.assertEqual(set(result.keys()), self.EXPECTED_PARSE_KEYS)
+        self.assertEqual(result["intent"], "unknown")
+
+    def test_interactive_tools_are_importable(self):
+        self.assertIsNotNone(importlib.import_module("interactive_cli"))
+        self.assertIsNotNone(importlib.import_module("interactive_gui"))
 
 
 if __name__ == "__main__":
