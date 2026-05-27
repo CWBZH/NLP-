@@ -1,0 +1,80 @@
+import pickle
+from typing import Iterable, List, Sequence, Tuple
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+
+
+class IntentClassifier:
+    """Intent classifier based on TF-IDF character features and logistic regression."""
+
+    NAVIGATION_LIKE_INTENTS = {"navigation", "add_waypoint", "query_route"}
+
+    def __init__(self, auto_train: bool = True):
+        self.model = Pipeline(
+            [
+                ("tfidf", TfidfVectorizer(analyzer="char", ngram_range=(1, 3))),
+                ("clf", LogisticRegression(max_iter=1000, random_state=7)),
+            ]
+        )
+        self._is_fitted = False
+        if auto_train:
+            self.fit(self.default_training_samples())
+
+    def fit(self, samples: Iterable[Tuple[str, str]]):
+        texts: List[str] = []
+        labels: List[str] = []
+        for text, label in samples:
+            texts.append(text)
+            labels.append(label)
+
+        if len(set(labels)) < 2:
+            raise ValueError("IntentClassifier requires at least two intent labels.")
+
+        self.model.fit(texts, labels)
+        self._is_fitted = True
+        return self
+
+    def predict(self, text: str) -> str:
+        if not self._is_fitted:
+            raise RuntimeError("IntentClassifier is not fitted.")
+        return self.model.predict([text])[0]
+
+    def is_navigation_like(self, intent: str) -> bool:
+        return intent in self.NAVIGATION_LIKE_INTENTS
+
+    def save(self, path: str) -> None:
+        with open(path, "wb") as file:
+            pickle.dump({"model": self.model, "is_fitted": self._is_fitted}, file)
+
+    @classmethod
+    def load(cls, path: str):
+        classifier = cls(auto_train=False)
+        with open(path, "rb") as file:
+            payload = pickle.load(file)
+        classifier.model = payload["model"]
+        classifier._is_fitted = payload["is_fitted"]
+        return classifier
+
+    @staticmethod
+    def default_training_samples() -> Sequence[Tuple[str, str]]:
+        return [
+            ("从蓝色点到绿色点", "navigation"),
+            ("我要从蓝点去绿点", "navigation"),
+            ("帮我规划从紫色点到绿色点的路线", "navigation"),
+            ("去绿色点，从蓝色点出发", "navigation"),
+            ("从蓝色点出发", "navigation"),
+            ("到绿色点", "navigation"),
+            ("再经过黄色点", "add_waypoint"),
+            ("帮我加一个青色点作为途经点", "add_waypoint"),
+            ("途径黄和紫", "add_waypoint"),
+            ("现在这条路线怎么走", "query_route"),
+            ("查询当前路线", "query_route"),
+            ("路线是什么", "query_route"),
+            ("今天天气怎么样", "unknown"),
+            ("讲个笑话", "unknown"),
+            ("北京现在几点", "unknown"),
+            ("红色是什么颜色", "unknown"),
+            ("打开音乐", "unknown"),
+        ]

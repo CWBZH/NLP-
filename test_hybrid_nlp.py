@@ -1,0 +1,305 @@
+import unittest
+import os
+import tempfile
+
+from color_normalizer import ColorNormalizer
+from generate_training_data import generate_bio_training_data
+from hybrid_path_nlp import HybridPathNLP
+from intent_classifier import IntentClassifier
+from slot_tagger import BiLSTMCRFSlotTagger
+
+
+class FakeIntentClassifier:
+    def __init__(self, intent):
+        self.intent = intent
+
+    def predict(self, text):
+        return self.intent
+
+
+class FakeSlotTagger:
+    def __init__(self, slots):
+        self.slots = slots
+
+    def predict(self, text):
+        return self.slots
+
+
+class HybridNLPTest(unittest.TestCase):
+    EXPECTED_PARSE_KEYS = {
+        "intent",
+        "start",
+        "waypoints",
+        "end",
+        "is_complete",
+        "missing_slots",
+    }
+
+    def test_color_normalizer_maps_aliases(self):
+        normalizer = ColorNormalizer()
+
+        self.assertEqual(normalizer.normalize("蓝色点"), "blue")
+        self.assertEqual(normalizer.normalize("蓝点"), "blue")
+        self.assertEqual(normalizer.normalize("蓝"), "blue")
+        self.assertEqual(normalizer.normalize("赤色点"), "red")
+        self.assertIsNone(normalizer.normalize("天气"))
+
+    def test_color_normalizer_distinguishes_cyan_and_blue(self):
+        normalizer = ColorNormalizer()
+
+        self.assertEqual(normalizer.normalize("青色点"), "cyan")
+        self.assertEqual(normalizer.normalize("蓝色点"), "blue")
+
+    def test_intent_classifier_predicts_navigation_and_unknown(self):
+        classifier = IntentClassifier()
+
+        self.assertEqual(classifier.predict("帮我规划从紫色点到绿色点的路线"), "navigation")
+        self.assertEqual(classifier.predict("今天天气怎么样"), "unknown")
+
+    def test_slot_tagger_extracts_spans_from_bio_tags(self):
+        tagger = BiLSTMCRFSlotTagger()
+
+        slots = tagger.decode_slots(
+            "从蓝色点经过青色点到绿色点",
+            [
+                "O",
+                "B-START",
+                "I-START",
+                "I-START",
+                "O",
+                "O",
+                "B-WAYPOINT",
+                "I-WAYPOINT",
+                "I-WAYPOINT",
+                "O",
+                "B-END",
+                "I-END",
+                "I-END",
+            ],
+        )
+
+        self.assertEqual(
+            slots,
+            {
+                "start_text": "蓝色点",
+                "waypoint_texts": ["青色点"],
+                "end_text": "绿色点",
+            },
+        )
+
+    def test_hybrid_parser_uses_model_slots_when_complete(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {
+                    "start_text": "蓝色点",
+                    "waypoint_texts": ["青色点", "紫点"],
+                    "end_text": "绿色点",
+                }
+            ),
+        )
+
+        self.assertEqual(
+            parser.parse("从蓝色点经过青色点和紫点到绿色点"),
+            {
+                "intent": "navigation",
+                "start": "blue",
+                "waypoints": ["cyan", "purple"],
+                "end": "green",
+                "is_complete": True,
+                "missing_slots": [],
+            },
+        )
+
+    def test_hybrid_parse_output_fields_are_fixed(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": "蓝色点", "waypoint_texts": [], "end_text": "绿色点"}
+            ),
+        )
+
+        result = parser.parse("从蓝色点到绿色点")
+
+        self.assertEqual(set(result.keys()), self.EXPECTED_PARSE_KEYS)
+        self.assertNotIn("used_fallback", result)
+        self.assertNotIn("slot_source", result)
+
+    def test_parse_with_debug_reports_model_source(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": "蓝色点", "waypoint_texts": [], "end_text": "绿色点"}
+            ),
+        )
+
+        debug = parser.parse_with_debug("从蓝色点到绿色点")
+
+        self.assertEqual(set(debug["result"].keys()), self.EXPECTED_PARSE_KEYS)
+        self.assertFalse(debug["used_fallback"])
+        self.assertEqual(debug["slot_source"], "model")
+        self.assertIsNone(debug["fallback_reason"])
+
+    def test_hybrid_parser_falls_back_when_slots_are_missing(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": None, "waypoint_texts": [], "end_text": None}
+            ),
+        )
+
+        self.assertEqual(
+            parser.parse("从蓝色点到绿色点"),
+            {
+                "intent": "navigation",
+                "start": "blue",
+                "waypoints": [],
+                "end": "green",
+                "is_complete": True,
+                "missing_slots": [],
+            },
+        )
+
+        debug = parser.parse_with_debug("从蓝色点到绿色点")
+        self.assertTrue(debug["used_fallback"])
+        self.assertEqual(debug["slot_source"], "fallback")
+        self.assertEqual(debug["fallback_reason"], "missing_required_slots")
+
+    def test_hybrid_parser_falls_back_when_color_normalization_fails(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": "蓝色点", "waypoint_texts": [], "end_text": "火星点"}
+            ),
+        )
+
+        debug = parser.parse_with_debug("从蓝色点到绿色点")
+
+        self.assertTrue(debug["used_fallback"])
+        self.assertEqual(debug["fallback_reason"], "unmapped_required_color")
+        self.assertEqual(debug["result"]["end"], "green")
+
+    def test_hybrid_parser_returns_unknown_for_unknown_intent(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("unknown"),
+            slot_tagger=FakeSlotTagger({}),
+        )
+
+        self.assertEqual(
+            parser.parse("今天天气怎么样"),
+            {
+                "intent": "unknown",
+                "start": None,
+                "waypoints": [],
+                "end": None,
+                "is_complete": False,
+                "missing_slots": [],
+            },
+        )
+
+    def test_hybrid_parser_keeps_multiple_waypoints_order(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {
+                    "start_text": "蓝",
+                    "waypoint_texts": ["青色点", "紫色点"],
+                    "end_text": "绿",
+                }
+            ),
+        )
+
+        result = parser.parse("从蓝到绿，途径青色点和紫色点")
+
+        self.assertEqual(result["waypoints"], ["cyan", "purple"])
+
+    def test_hybrid_parser_normalizes_red_aliases(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": "红色点", "waypoint_texts": [], "end_text": "赤色点"}
+            ),
+        )
+
+        result = parser.parse("从红色点到赤色点")
+
+        self.assertEqual(result["start"], "red")
+        self.assertEqual(result["end"], "red")
+
+    def test_hybrid_parser_missing_start_slot(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": None, "waypoint_texts": [], "end_text": "绿色点"}
+            ),
+        )
+
+        result = parser.parse("帮我规划到绿色点")
+
+        self.assertIn("start", result["missing_slots"])
+
+    def test_hybrid_parser_missing_end_slot(self):
+        parser = HybridPathNLP(
+            intent_classifier=FakeIntentClassifier("navigation"),
+            slot_tagger=FakeSlotTagger(
+                {"start_text": "蓝色点", "waypoint_texts": [], "end_text": None}
+            ),
+        )
+
+        result = parser.parse("从蓝色点出发")
+
+        self.assertIn("end", result["missing_slots"])
+
+    def test_generate_bio_training_data_contains_valid_bio_sequences(self):
+        samples = generate_bio_training_data(limit=5)
+
+        self.assertEqual(len(samples), 5)
+        for sample in samples:
+            self.assertEqual(len(sample["text"]), len(sample["tags"]))
+            self.assertIn("intent", sample)
+            self.assertTrue(set(sample["tags"]).issubset(set(BiLSTMCRFSlotTagger.TAGS)))
+
+    def test_slot_tagger_save_load_predict_format(self):
+        samples = [
+            {
+                "text": "从蓝色点到绿色点",
+                "intent": "navigation",
+                "tags": [
+                    "O",
+                    "B-START",
+                    "I-START",
+                    "I-START",
+                    "O",
+                    "B-END",
+                    "I-END",
+                    "I-END",
+                ],
+            }
+        ]
+        tagger = BiLSTMCRFSlotTagger(embedding_dim=8, hidden_dim=16)
+        tagger.fit(samples, epochs=1)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl") as temp_file:
+            model_path = temp_file.name
+
+        try:
+            tagger.save(model_path)
+            loaded = BiLSTMCRFSlotTagger(model_path=model_path)
+            result = loaded.predict("从蓝色点到绿色点")
+
+            self.assertEqual(
+                set(result.keys()),
+                {"start_text", "waypoint_texts", "end_text"},
+            )
+            self.assertIsInstance(result["waypoint_texts"], list)
+            self.assertIn("蓝", loaded.char_to_id)
+            self.assertEqual(loaded.id_to_char[loaded.char_to_id["蓝"]], "蓝")
+            self.assertEqual(loaded.tag_to_id["B-START"], 1)
+            self.assertEqual(loaded.id_to_tag[1], "B-START")
+        finally:
+            if os.path.exists(model_path):
+                os.remove(model_path)
+
+
+if __name__ == "__main__":
+    unittest.main()
